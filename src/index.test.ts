@@ -215,6 +215,42 @@ describe('图片带上真实名字（AstrBot 版写死成 img0）', () => {
     await say('/问问', { mentions: [{ id: 'BOT', username: '机器人', bot: true }], userName: '赵六' })
     expect(generated('ask')[0]!.images[0]!.name).toBe('赵六')
   })
+
+  describe('没开全量消息的群：被 @ 的群友只在正文里', () => {
+    const BOT_MEMBER = '0F0F0F0F0F0F0F0F0F0F0F0F0F0F0F0F'
+    const TARGET = 'A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1'
+
+    it('mentions 一项都没有：认正文里关键词后面的 <@…>，前面那个当作在叫机器人', async () => {
+      await say('/问问', { userName: '赵六', raw: { content: `<@${BOT_MEMBER}> /问问 <@${TARGET}>` } })
+      expect(uploadedUrls()).toEqual([qqAvatar('test-bot', TARGET, 640)])
+    })
+
+    it('mentions 里只有 @ 机器人那一项（is_you）', async () => {
+      await say('/问问', {
+        userName: '赵六',
+        raw: { content: `<@${BOT_MEMBER}> /问问 <@${TARGET}>`, mentions: [{ id: BOT_MEMBER, username: '机器人', is_you: true }] },
+      })
+      expect(uploadedUrls()).toEqual([qqAvatar('test-bot', TARGET, 640)])
+    })
+
+    it('原始 mentions 是 member_openid / nickname 的写法也认，名字画进图里', async () => {
+      await say('/问问', {
+        raw: {
+          content: `<@${BOT_MEMBER}> /问问 <@${TARGET}>`,
+          mentions: [
+            { member_openid: BOT_MEMBER, nickname: '机器人', is_you: true },
+            { member_openid: TARGET, nickname: '小明', is_you: false },
+          ],
+        },
+      })
+      expect(generated('ask')[0]!.images[0]!.name).toBe('小明')
+    })
+
+    it('只 @ 了机器人：用发送者自己的头像，不会拿机器人的', async () => {
+      await say('/问问', { userName: '赵六', raw: { content: `<@${BOT_MEMBER}> /问问` } })
+      expect(generated('ask')[0]!.images[0]!.name).toBe('赵六')
+    })
+  })
 })
 
 describe('选项', () => {
