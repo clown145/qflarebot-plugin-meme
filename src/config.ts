@@ -1,9 +1,19 @@
 import type { JsonSchema } from '@qqbot/sdk'
 
+/** 图片怎么交给 meme 服务 */
+export type UploadMode = 'auto' | 'url' | 'worker'
+export const UPLOAD_MODES: readonly UploadMode[] = ['auto', 'url', 'worker']
+
 /** 面板里保存的配置 */
 export interface Config {
-  /** meme-generator-rs 服务地址。Worker 和 QQ 都要能访问：需要公网域名 + 443 端口 */
+  /** meme-generator-rs 服务地址。Worker 要能访问：需要公网域名 + 443 端口 */
   base_url: string
+  /** meme 服务要鉴权时的令牌（如 ModelScope 创空间的 ms-…），请求时带 Authorization: Bearer */
+  token: string
+  /** 机器人自己的公开地址；配了 token 时 QQ 拉不到 meme 服务的图，改由本插件的公开路由转发 */
+  public_base_url: string
+  /** 图片怎么交给 meme 服务：url 让它自己下载，worker 由 Worker 下载后上传，auto 先试 url */
+  upload_mode: UploadMode
   /** 单次请求 meme 服务的超时（秒） */
   timeout: number
   /** 没 @ 机器人时，关键词前要带的前缀；@ 机器人或单聊时不需要 */
@@ -24,6 +34,9 @@ export interface Config {
 
 export const defaultConfig: Config = {
   base_url: '',
+  token: '',
+  public_base_url: '',
+  upload_mode: 'auto',
   timeout: 15,
   prefixes: ['/'],
   bare_keywords: false,
@@ -40,8 +53,27 @@ export const configSchema: JsonSchema = {
     base_url: {
       type: 'string',
       title: 'meme 服务地址',
-      description: 'meme-generator-rs 的地址，如 https://meme.example.com。Worker 调它生成表情，QQ 也直接从这里拉图，所以要公网域名 + 443 端口（Workers 不能直连 IP）',
+      description: 'meme-generator-rs 的地址，如 https://meme.example.com。要公网域名 + 443 端口（Workers 不能直连 IP）。没配 token 时 QQ 也直接从这里拉图',
       default: '',
+    },
+    token: {
+      type: 'string',
+      title: '访问令牌（可选）',
+      description: 'meme 服务要鉴权时填，如 ModelScope 创空间的访问令牌（ms-…）；请求时带上 Authorization: Bearer。面板里是明文显示的。填了之后 QQ 拉图带不了令牌，要同时填下面的「机器人公开地址」',
+      default: '',
+    },
+    public_base_url: {
+      type: 'string',
+      title: '机器人公开地址（配了令牌时必填）',
+      description: '机器人 Worker 的公开地址，如 https://bot.example.com，只接受 https。配了令牌时，图片经本插件的公开路由 /p/meme/image/<id> 带着令牌转发给 QQ（流式转发，不占 CPU）；没配令牌时用不到',
+      default: '',
+    },
+    upload_mode: {
+      type: 'string',
+      title: '图片上传方式',
+      enum: [...UPLOAD_MODES],
+      description: 'url：让 meme 服务按地址自己下载头像和图片（最省）；worker：由 Worker 下载后上传，meme 服务访问不了外网时用（如 ModelScope 创空间）；auto：先试 url，meme 服务下载失败一次后，这个实例之后都改用 worker',
+      default: 'auto',
     },
     timeout: {
       type: 'integer',
@@ -90,6 +122,11 @@ export const configSchema: JsonSchema = {
 /** 配置归一化后的样子：地址去掉末尾斜杠、数字夹到合理范围 */
 export interface Settings {
   baseUrl: string
+  /** 不带 `Bearer ` 前缀的令牌；空串表示不鉴权 */
+  token: string
+  /** 纯 https origin；空串表示没配或不合法 */
+  publicBaseUrl: string
+  uploadMode: UploadMode
   timeoutMs: number
   prefixes: string[]
   bareKeywords: boolean
@@ -105,11 +142,26 @@ function clamp(value: unknown, min: number, max: number, fallback: number): numb
   return Math.min(max, Math.max(min, n))
 }
 
+/** 只认 https，归一化成 origin（去掉尾斜杠和误粘的路径）；不合法就当没配 */
+function httpsOrigin(value: unknown): string {
+  if (typeof value !== 'string' || !value.trim()) return ''
+  try {
+    const url = new URL(value.trim())
+    return url.protocol === 'https:' ? url.origin : ''
+  } catch {
+    return ''
+  }
+}
+
 export function resolveSettings(config: Partial<Config> | undefined): Settings {
   const c = { ...defaultConfig, ...config }
   const prefixes = Array.isArray(c.prefixes) ? c.prefixes.filter((p): p is string => typeof p === 'string' && p.trim() !== '') : []
+  const token = typeof c.token === 'string' ? c.token.trim().replace(/^Bearer\s+/i, '') : ''
   return {
     baseUrl: typeof c.base_url === 'string' ? c.base_url.trim().replace(/\/+$/, '') : '',
+    token,
+    publicBaseUrl: httpsOrigin(c.public_base_url),
+    uploadMode: UPLOAD_MODES.includes(c.upload_mode) ? c.upload_mode : 'auto',
     timeoutMs: clamp(c.timeout, 1, 25, defaultConfig.timeout) * 1000,
     prefixes: prefixes.map((p) => p.trim()).sort((a, b) => b.length - a.length),
     bareKeywords: c.bare_keywords === true,

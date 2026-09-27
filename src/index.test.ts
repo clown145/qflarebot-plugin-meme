@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { normalizePlugin, qqAvatar } from '@qqbot/sdk'
 import { createMockContext, createMockSession, runCommand, type MockSessionOptions } from '@qqbot/sdk/testing'
-import type { RawMemeInfo } from './api.js'
+import { resetUploadMemory, type RawMemeInfo } from './api.js'
 import { resetCatalogCache } from './catalog.js'
 import type { Config } from './config.js'
 import plugin from './index.js'
@@ -91,31 +91,62 @@ interface Call {
   method: string
   path: string
   body?: Record<string, unknown>
+  /** 请求带的 Authorization 头 */
+  auth?: string
 }
 
 let calls: Call[]
+/** Worker 自己去下载的外部地址（worker 上传模式） */
+let downloads: string[]
 let db: TestDB
 let searchResult: string[]
 let frames: number
+/** 模拟访问不了外网的部署（ModelScope 创空间）：按 URL 上传时网关直接 503 */
+let serverOffline: boolean
+/** 模拟要令牌的部署：不带这个令牌一律 401 */
+let requiredToken: string
 
 beforeEach(async () => {
   resetCatalogCache()
+  resetUploadMemory()
   calls = []
+  downloads = []
   searchResult = []
   frames = 3
+  serverOffline = false
+  requiredToken = ''
   db = await createTestDB()
   let uploads = 0
   vi.stubGlobal(
     'fetch',
     vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
       const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url)
-      const body = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : undefined
-      calls.push({ method: init?.method ?? 'GET', path: url.pathname + url.search, ...(body ? { body } : {}) })
+      if (url.origin !== BASE) {
+        downloads.push(url.href)
+        return new Response(new Uint8Array([137, 80, 78, 71]), { headers: { 'content-type': 'image/png' } })
+      }
+      const auth = new Headers(init?.headers).get('authorization') ?? undefined
+      const raw = init?.body
+      const body =
+        raw instanceof FormData
+          ? { multipart: [...raw.keys()] }
+          : raw
+            ? (JSON.parse(String(raw)) as Record<string, unknown>)
+            : undefined
+      calls.push({ method: init?.method ?? 'GET', path: url.pathname + url.search, ...(body ? { body } : {}), ...(auth ? { auth } : {}) })
+      if (requiredToken && auth !== `Bearer ${requiredToken}`) {
+        return Response.json({ error: { message: 'Authentication failed, please make sure that a valid ModelScope token is supplied.' } }, { status: 401 })
+      }
       const p = url.pathname
       if (p === '/meme/version') return new Response('0.2.0')
       if (p === '/meme/infos') return Response.json(INFOS)
       if (p === '/meme/search') return Response.json(searchResult)
-      if (p === '/image/upload') return Response.json({ image_id: `up${++uploads}` })
+      if (p === '/image/upload') {
+        if (serverOffline) return new Response('upstream connect error or disconnect/reset before headers.', { status: 503 })
+        return Response.json({ image_id: `up${++uploads}` })
+      }
+      if (p === '/image/upload/multipart') return Response.json({ image_id: `mp${++uploads}` })
+      if (p.startsWith('/image/')) return new Response(new Uint8Array([71, 73, 70]), { headers: { 'content-type': 'image/gif' } })
       if (p.endsWith('/info')) return Response.json(INFOS.find((i) => p === `/memes/${i.key}/info`))
       if (p.endsWith('/preview')) return Response.json({ image_id: 'preview' })
       if (p.startsWith('/memes/')) return Response.json({ image_id: 'result' })
@@ -408,6 +439,96 @@ describe('命令', () => {
     await catchAll({ session, ctx: createMockContext(plugin, { config: CONFIG as Config, db }), match: ['/摸'] as unknown as RegExpMatchArray })
     expect(seen[0]).toEqual({ image: { url: `${BASE}/image/result` } })
     expect(seen[1]).toContain('图片发送失败：富媒体上传失败')
+  })
+})
+
+describe('访问令牌与上传方式（ModelScope 创空间这类部署）', () => {
+  const TOKEN = 'ms-test-token'
+  const withToken: Partial<Config> = { ...CONFIG, token: TOKEN, public_base_url: 'https://bot.example.com/随手粘的路径' }
+
+  it('填了令牌后，发往 meme 服务的请求都带 Authorization: Bearer', async () => {
+    requiredToken = TOKEN
+    await say('/摸', {}, withToken)
+    expect(generated('petpet')).toHaveLength(1)
+    expect(calls.every((c) => c.auth === `Bearer ${TOKEN}`)).toBe(true)
+  })
+
+  it('令牌前面多粘了 Bearer 也认', async () => {
+    requiredToken = TOKEN
+    await say('/摸', {}, { ...withToken, token: `Bearer ${TOKEN}` })
+    expect(generated('petpet')).toHaveLength(1)
+  })
+
+  it('没填令牌时不带请求头；服务要鉴权时提示去填令牌', async () => {
+    requiredToken = TOKEN
+    const session = await runCommand(plugin, '表情列表', '', { ctx: { config: CONFIG as Config, db } })
+    expect(calls[0]!.auth).toBeUndefined()
+    expect(session.replies[0]).toContain('meme 服务拒绝访问（HTTP 401：Authentication failed')
+    expect(session.replies[0]).toContain('「访问令牌」')
+  })
+
+  it('配了令牌时，交给 QQ 的是本插件的转发地址', async () => {
+    requiredToken = TOKEN
+    const session = await say('/摸', {}, withToken)
+    expect(session.replies).toEqual([{ image: { url: 'https://bot.example.com/p/meme/image/result' } }])
+  })
+
+  it('转发路由带着令牌取图并原样流给 QQ；id 不合法或没配令牌时 404', async () => {
+    requiredToken = TOKEN
+    const route = plugin.routes![0]!
+    const id = '6c825ed7ea4cd25657288ab4f7d0227f'
+    const request = (p: string) => new Request(`https://bot.example.com/p/meme/image/${p}`)
+    const ctx = createMockContext(plugin, { config: withToken as Config, db })
+
+    const ok = await route.handler({ ctx, request: request(id), params: { id }, authenticated: false })
+    expect(ok.status).toBe(200)
+    expect(ok.headers.get('content-type')).toBe('image/gif')
+    expect(new Uint8Array(await ok.arrayBuffer())).toEqual(new Uint8Array([71, 73, 70]))
+    expect(calls.at(-1)).toMatchObject({ path: `/image/${id}`, auth: `Bearer ${TOKEN}` })
+
+    const bad = await route.handler({ ctx, request: request('x'), params: { id: '../meme/infos' }, authenticated: false })
+    expect(bad.status).toBe(404)
+    const noToken = createMockContext(plugin, { config: CONFIG as Config, db })
+    expect((await route.handler({ ctx: noToken, request: request(id), params: { id }, authenticated: false })).status).toBe(404)
+  })
+
+  it('配了令牌却没填公开地址：QQ 拉不到时提示去填', async () => {
+    requiredToken = TOKEN
+    const session = createMockSession({ content: '/摸' })
+    const seen: unknown[] = []
+    session.reply = async (m) => {
+      seen.push(m)
+      return seen.length === 1 ? { ok: false, status: 400, error: '富媒体上传失败', raw: null } : { ok: true, status: 200, raw: null }
+    }
+    const ctx = createMockContext(plugin, { config: { ...CONFIG, token: TOKEN } as Config, db })
+    await catchAll({ session, ctx, match: ['/摸'] as unknown as RegExpMatchArray })
+    expect(seen[0]).toEqual({ image: { url: `${BASE}/image/result` } })
+    expect(seen[1]).toContain('请在插件配置里填「机器人公开地址」')
+  })
+
+  it('auto：meme 服务按 URL 下载失败时改由 Worker 下载、multipart 上传，这个实例之后直接走 Worker', async () => {
+    serverOffline = true
+    await say('/问问', { mentions: [{ id: 'OPENID_A', username: '张三', bot: false }] })
+    expect(generated('ask')[0]!.images).toEqual([{ name: '张三', id: 'mp1' }])
+    expect(downloads).toEqual([qqAvatar('test-bot', 'OPENID_A', 640)])
+    expect(calls.find((c) => c.path === '/image/upload/multipart')!.body).toEqual({ multipart: ['file'] })
+
+    const urlTries = () => calls.filter((c) => c.path === '/image/upload').length
+    expect(urlTries()).toBe(1)
+    await say('/问问', { mentions: [{ id: 'OPENID_B', username: '李四', bot: false }] })
+    expect(urlTries()).toBe(1)
+    expect(generated('ask')).toHaveLength(2)
+  })
+
+  it('url 模式失败不回退；worker 模式直接由 Worker 上传', async () => {
+    serverOffline = true
+    const failed = await say('/摸', {}, { ...CONFIG, upload_mode: 'url' })
+    expect(failed.replies[0]).toContain('制作表情的最后一步失败了，呜呜...（upstream connect error')
+    expect(downloads).toEqual([])
+
+    await say('/摸', {}, { ...CONFIG, upload_mode: 'worker' })
+    expect(calls.filter((c) => c.path === '/image/upload')).toHaveLength(1)
+    expect(generated('petpet')).toHaveLength(1)
   })
 })
 

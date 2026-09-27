@@ -36,8 +36,12 @@ export async function sendImage(env: Env, imageId: string, text?: string): Promi
   const url = env.api.imageUrl(imageId)
   const result = await respond(env.session, text ? { text, image: { url } } : { image: { url } })
   if (result.ok) return true
-  env.ctx.logger.warn('QQ 没有拉到 meme 服务的图片', { url, status: result.status, error: result.error })
-  await respond(env.session, `图片发送失败：${result.error ?? `HTTP ${result.status}`}（QQ 要能访问 meme 服务地址）`)
+  env.ctx.logger.warn('QQ 没有拉到表情图片', { url, status: result.status, error: result.error })
+  const hint =
+    env.settings.token && !env.settings.publicBaseUrl
+      ? '配了访问令牌时 QQ 拉不到 meme 服务的图，请在插件配置里填「机器人公开地址」'
+      : 'QQ 要能访问这个图片地址'
+  await respond(env.session, `图片发送失败：${result.error ?? `HTTP ${result.status}`}（${hint}）`)
   return false
 }
 

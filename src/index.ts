@@ -1,5 +1,5 @@
 import { definePlugin, type Command, type CommandInput, type PluginContext, type RegexInput, type Session } from '@qqbot/sdk'
-import { describeError, MemeApi, withReason } from './api.js'
+import { createApi, describeError, IMAGE_ID, IMAGE_ROUTE, MemeApiError, withReason } from './api.js'
 import { ArgError, parseArgs, splitArgs } from './args.js'
 import { CATALOG_DDL, checkCatalogVersion, getCatalog, refreshCatalog, type Catalog } from './catalog.js'
 import { configSchema, defaultConfig, resolveSettings, type Config } from './config.js'
@@ -29,7 +29,7 @@ const DAY_MS = 86_400_000
 function envOf(session: Session, ctx: PluginContext<Config>): Env | null {
   const settings = resolveSettings(ctx.config)
   if (!settings.baseUrl) return null
-  return { session, ctx, settings, api: new MemeApi(settings.baseUrl, settings.timeoutMs) }
+  return { session, ctx, settings, api: createApi(settings) }
 }
 
 /** 命令的公共外壳：没配地址先提示，处理器自己回复 */
@@ -257,10 +257,40 @@ export default definePlugin<Config>({
       async handler({ ctx }) {
         await purgeExpired(ctx.db)
         const settings = resolveSettings(ctx.config)
-        if (settings.baseUrl) await checkCatalogVersion(ctx.db, new MemeApi(settings.baseUrl, settings.timeoutMs))
+        if (settings.baseUrl) await checkCatalogVersion(ctx.db, createApi(settings))
       },
     },
   },
+
+  routes: [
+    {
+      // 配了访问令牌时 QQ 拉不到 meme 服务的图，由这里带着令牌取图再流式转给 QQ。
+      // 公开路由（QQ 的富媒体服务器没有登录态）；只放行 meme 服务的图片 id，没配令牌时一律 404，不当开放代理
+      method: 'GET',
+      path: IMAGE_ROUTE,
+      auth: 'public',
+      async handler({ ctx, params }) {
+        const id = params.id ?? ''
+        const settings = resolveSettings(ctx.config)
+        if (!IMAGE_ID.test(id) || !settings.baseUrl || !settings.token) return new Response('not found', { status: 404 })
+        let upstream: Response
+        try {
+          upstream = await createApi(settings).image(id)
+        } catch (e) {
+          const status = e instanceof MemeApiError && e.status === 404 ? 404 : 502
+          ctx.logger.warn('转发表情图片失败', { id, error: e instanceof Error ? e.message : String(e) })
+          return new Response(status === 404 ? 'not found' : 'upstream error', { status })
+        }
+        // 不把图片读进内存，CPU 开销接近零；meme 服务的临时图 10 分钟后清掉，缓存不必更长
+        return new Response(upstream.body, {
+          headers: {
+            'content-type': upstream.headers.get('content-type') ?? 'image/png',
+            'cache-control': 'public, max-age=600',
+          },
+        })
+      },
+    },
+  ],
 
   hooks: {
     async onInstall(ctx) {
