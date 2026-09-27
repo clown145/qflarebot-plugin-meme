@@ -1,0 +1,215 @@
+{
+  "name": "meme",
+  "version": "0.1.0",
+  "apiVersion": 1,
+  "permissions": [
+    "net",
+    "db"
+  ],
+  "depends": {},
+  "conflicts": [],
+  "commands": [
+    {
+      "name": "表情列表",
+      "description": "查看所有表情",
+      "aliases": [
+        "表情包列表"
+      ]
+    },
+    {
+      "name": "表情详情",
+      "description": "查看表情用法和预览",
+      "usage": "/表情详情 <关键词>",
+      "aliases": [
+        "表情详细"
+      ]
+    },
+    {
+      "name": "表情搜索",
+      "description": "按关键词搜索表情",
+      "usage": "/表情搜索 <关键词>"
+    },
+    {
+      "name": "随机表情",
+      "description": "随机做一个表情",
+      "usage": "/随机表情 [文字/图片]"
+    },
+    {
+      "name": "刷新表情",
+      "description": "重新拉取表情列表",
+      "permission": "bot_admin"
+    },
+    {
+      "name": "水平翻转",
+      "description": "图片左右翻转"
+    },
+    {
+      "name": "竖直翻转",
+      "description": "图片上下翻转"
+    },
+    {
+      "name": "旋转",
+      "description": "旋转图片，默认 90 度",
+      "usage": "/旋转 [角度]"
+    },
+    {
+      "name": "缩放",
+      "description": "按尺寸缩放图片",
+      "usage": "/缩放 <宽x高|宽x|x高>"
+    },
+    {
+      "name": "裁剪",
+      "description": "裁剪图片",
+      "usage": "/裁剪 <左,上,右,下|宽x高|宽:高>"
+    },
+    {
+      "name": "灰度",
+      "description": "转成灰度图",
+      "aliases": [
+        "灰度图"
+      ]
+    },
+    {
+      "name": "反色",
+      "description": "图片反色",
+      "aliases": [
+        "反相"
+      ]
+    },
+    {
+      "name": "水平拼接",
+      "description": "多张图左右拼接",
+      "aliases": [
+        "横向拼接"
+      ]
+    },
+    {
+      "name": "竖直拼接",
+      "description": "多张图上下拼接",
+      "aliases": [
+        "纵向拼接"
+      ]
+    },
+    {
+      "name": "gif分解",
+      "description": "把 GIF 拆成单帧"
+    },
+    {
+      "name": "gif合成",
+      "description": "多张图合成 GIF",
+      "usage": "/gif合成 [帧间隔秒]"
+    },
+    {
+      "name": "gif倒放",
+      "description": "GIF 倒着播放"
+    },
+    {
+      "name": "gif变速",
+      "description": "调整 GIF 播放速度",
+      "usage": "/gif变速 <0.5x|50%|20fps|0.05s>"
+    }
+  ],
+  "regex": [
+    {
+      "pattern": "[\\s\\S]*",
+      "priority": -100
+    }
+  ],
+  "events": [],
+  "buttons": [],
+  "cron": [
+    {
+      "name": "maintain",
+      "cron": "23 19 * * *"
+    }
+  ],
+  "routes": [],
+  "hasMiddleware": false,
+  "services": [],
+  "durableObjects": [],
+  "displayName": "表情包",
+  "description": "表情包制作与图片工具，对接 meme-generator-rs",
+  "configSchema": {
+    "type": "object",
+    "properties": {
+      "base_url": {
+        "type": "string",
+        "title": "meme 服务地址",
+        "description": "meme-generator-rs 的地址，如 https://meme.example.com。Worker 调它生成表情，QQ 也直接从这里拉图，所以要公网域名 + 443 端口（Workers 不能直连 IP）",
+        "default": ""
+      },
+      "timeout": {
+        "type": "integer",
+        "title": "请求超时（秒）",
+        "description": "整次处理跑在 waitUntil 里，总共不能超过 30 秒；生成要先上传再生成两步，所以单次别设太长",
+        "minimum": 1,
+        "maximum": 25,
+        "default": 15
+      },
+      "prefixes": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "title": "关键词前缀",
+        "description": "没 @ 机器人时，关键词前要带这些前缀之一才触发；@ 机器人或单聊时不需要。建议与面板的命令前缀一致",
+        "default": [
+          "/"
+        ]
+      },
+      "bare_keywords": {
+        "type": "boolean",
+        "title": "不带前缀也触发",
+        "description": "开启后，群里任何以表情关键词开头的消息都会触发（群开了接收全部消息时会很频繁）",
+        "default": false
+      },
+      "fuzzy_match": {
+        "type": "boolean",
+        "title": "关键词模糊匹配",
+        "description": "关键词后面不加空格也能认出，例如「摸摸头张三」",
+        "default": true
+      },
+      "use_sender_when_no_image": {
+        "type": "boolean",
+        "title": "图片不够时用发送者头像",
+        "default": true
+      },
+      "interactive": {
+        "type": "boolean",
+        "title": "参数不够时等待补充",
+        "description": "关闭后参数不够直接提示用法。开启时，每条没被其他命令接走的消息会多一次 D1 主键读（不写入）",
+        "default": true
+      },
+      "interactive_timeout": {
+        "type": "integer",
+        "title": "等待补充的时长（秒）",
+        "minimum": 10,
+        "maximum": 300,
+        "default": 60
+      },
+      "label_new_days": {
+        "type": "integer",
+        "title": "「新」标记天数",
+        "minimum": 0,
+        "maximum": 365,
+        "default": 7
+      }
+    },
+    "required": [
+      "base_url"
+    ]
+  },
+  "defaultConfig": {
+    "base_url": "",
+    "timeout": 15,
+    "prefixes": [
+      "/"
+    ],
+    "bare_keywords": false,
+    "fuzzy_match": true,
+    "use_sender_when_no_image": true,
+    "interactive": true,
+    "interactive_timeout": 60,
+    "label_new_days": 7
+  }
+}
