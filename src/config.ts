@@ -59,13 +59,15 @@ export const configSchema: JsonSchema = {
     token: {
       type: 'string',
       title: '访问令牌（可选）',
-      description: 'meme 服务要鉴权时填，如 ModelScope 创空间的访问令牌（ms-…）；请求时带上 Authorization: Bearer。面板里是明文显示的。填了之后 QQ 拉图带不了令牌，要同时填下面的「机器人公开地址」',
+      description: 'meme 服务要鉴权时填，如 ModelScope 创空间的访问令牌（ms-…）；请求时带上 Authorization: Bearer。填了之后 QQ 拉图带不了令牌，图片改由本插件转发（见下面的「机器人公开地址」）',
+      // 面板不回显，只显示「已设置」（0.4 以前的机器人不认这个标记，照旧明文显示）
+      writeOnly: true,
       default: '',
     },
     public_base_url: {
       type: 'string',
-      title: '机器人公开地址（配了令牌时必填）',
-      description: '机器人 Worker 的公开地址，如 https://bot.example.com，只接受 https。配了令牌时，图片经本插件的公开路由 /p/meme/image/<id> 带着令牌转发给 QQ（流式转发，不占 CPU）；没配令牌时用不到',
+      title: '机器人公开地址（配了令牌时用）',
+      description: '机器人 Worker 的公开地址，如 https://bot.example.com，只接受 https。一般不用填：不填时用机器人设置里的公开地址（0.4 起的机器人才有；更老的机器人配了令牌时必须填）。配了令牌时，图片经本插件的公开路由 /p/meme/image/<id> 带着令牌转发给 QQ（流式转发，不占 CPU）；没配令牌时用不到',
       default: '',
     },
     upload_mode: {
@@ -153,14 +155,18 @@ function httpsOrigin(value: unknown): string {
   }
 }
 
-export function resolveSettings(config: Partial<Config> | undefined): Settings {
+/**
+ * `botPublicUrl` 是框架给的 `ctx.publicUrl`（机器人设置里的公开地址，没填就是请求进来的域名）：
+ * 插件配置里的「机器人公开地址」没填时用它。定时任务里、老版本机器人上没有
+ */
+export function resolveSettings(config: Partial<Config> | undefined, botPublicUrl?: string): Settings {
   const c = { ...defaultConfig, ...config }
   const prefixes = Array.isArray(c.prefixes) ? c.prefixes.filter((p): p is string => typeof p === 'string' && p.trim() !== '') : []
   const token = typeof c.token === 'string' ? c.token.trim().replace(/^Bearer\s+/i, '') : ''
   return {
     baseUrl: typeof c.base_url === 'string' ? c.base_url.trim().replace(/\/+$/, '') : '',
     token,
-    publicBaseUrl: httpsOrigin(c.public_base_url),
+    publicBaseUrl: httpsOrigin(c.public_base_url) || httpsOrigin(botPublicUrl),
     uploadMode: UPLOAD_MODES.includes(c.upload_mode) ? c.upload_mode : 'auto',
     timeoutMs: clamp(c.timeout, 1, 25, defaultConfig.timeout) * 1000,
     prefixes: prefixes.map((p) => p.trim()).sort((a, b) => b.length - a.length),

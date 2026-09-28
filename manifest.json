@@ -1,6 +1,6 @@
 {
   "name": "meme",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "apiVersion": 1,
   "permissions": [
     "net",
@@ -147,13 +147,14 @@
       "token": {
         "type": "string",
         "title": "访问令牌（可选）",
-        "description": "meme 服务要鉴权时填，如 ModelScope 创空间的访问令牌（ms-…）；请求时带上 Authorization: Bearer。面板里是明文显示的。填了之后 QQ 拉图带不了令牌，要同时填下面的「机器人公开地址」",
+        "description": "meme 服务要鉴权时填，如 ModelScope 创空间的访问令牌（ms-…）；请求时带上 Authorization: Bearer。填了之后 QQ 拉图带不了令牌，图片改由本插件转发（见下面的「机器人公开地址」）",
+        "writeOnly": true,
         "default": ""
       },
       "public_base_url": {
         "type": "string",
-        "title": "机器人公开地址（配了令牌时必填）",
-        "description": "机器人 Worker 的公开地址，如 https://bot.example.com，只接受 https。配了令牌时，图片经本插件的公开路由 /p/meme/image/<id> 带着令牌转发给 QQ（流式转发，不占 CPU）；没配令牌时用不到",
+        "title": "机器人公开地址（配了令牌时用）",
+        "description": "机器人 Worker 的公开地址，如 https://bot.example.com，只接受 https。一般不用填：不填时用机器人设置里的公开地址（0.4 起的机器人才有；更老的机器人配了令牌时必须填）。配了令牌时，图片经本插件的公开路由 /p/meme/image/<id> 带着令牌转发给 QQ（流式转发，不占 CPU）；没配令牌时用不到",
         "default": ""
       },
       "upload_mode": {

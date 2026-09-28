@@ -16,7 +16,7 @@
 ### 部署在 ModelScope 创空间这类要鉴权、又访问不了外网的平台
 
 - 把访问令牌（`ms-…`）填进 `token`，插件请求 meme 服务时会带上 `Authorization: Bearer`；
-- QQ 拉图带不了令牌，所以还要填 `public_base_url`（机器人自己的公开地址）。图片改由本插件的公开路由 `/p/meme/image/<id>` 带着令牌取回、流式转给 QQ，不把图片读进内存；
+- QQ 拉图带不了令牌，图片改由本插件的公开路由 `/p/meme/image/<id>` 带着令牌取回、流式转给 QQ，不把图片读进内存。拼这个地址要知道机器人自己的公开地址：QFlareBot 0.4 起插件自己就拿得到，`public_base_url` 不用填；更老的机器人要填上；
 - 这类平台的容器通常访问不了外网，meme 服务没法自己下载头像。`upload_mode` 默认的 `auto` 会在第一次下载失败后改由 Worker 下载、用 multipart 上传（不转 base64），也可以直接设成 `worker`。
 
 ## 用法
@@ -53,8 +53,8 @@
 | 配置项 | 默认 | 说明 |
 | --- | --- | --- |
 | `base_url` | — | meme 服务地址（必填） |
-| `token` | 空 | 访问令牌（可选），填了就带 `Authorization: Bearer`。面板里明文显示 |
-| `public_base_url` | 空 | 机器人公开地址，只接受 https。只在配了令牌时用，图片经本插件路由转给 QQ |
+| `token` | 空 | 访问令牌（可选），填了就带 `Authorization: Bearer`。QFlareBot 0.4 起面板不回显，只显示「已设置」 |
+| `public_base_url` | 空 | 机器人公开地址，只接受 https。只在配了令牌时用，图片经本插件路由转给 QQ。不填时用机器人设置里的公开地址（QFlareBot 0.4 起）；更老的机器人必须填 |
 | `upload_mode` | `auto` | `url`：meme 服务自己下载图片；`worker`：Worker 下载后上传；`auto`：先试 `url`，失败一次后改用 `worker` |
 | `timeout` | 15 | 单次请求超时（秒）。整次处理最多 30 秒，别设太长 |
 | `prefixes` | `["/"]` | 没 @ 机器人时关键词要带的前缀，建议与面板的命令前缀一致 |

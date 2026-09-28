@@ -3,7 +3,7 @@ import { normalizePlugin, qqAvatar } from '@qqbot/sdk'
 import { createMockContext, createMockSession, runCommand, type MockSessionOptions } from '@qqbot/sdk/testing'
 import { resetUploadMemory, type RawMemeInfo } from './api.js'
 import { resetCatalogCache } from './catalog.js'
-import type { Config } from './config.js'
+import { configSchema, type Config } from './config.js'
 import plugin from './index.js'
 import { createTestDB, type TestDB } from './testing.js'
 
@@ -540,6 +540,22 @@ describe('访问令牌与上传方式（ModelScope 创空间这类部署）', ()
     await catchAll({ session, ctx, match: ['/摸'] as unknown as RegExpMatchArray })
     expect(seen[0]).toEqual({ image: { url: `${BASE}/image/result` } })
     expect(seen[1]).toContain('请在插件配置里填「机器人公开地址」')
+  })
+
+  it('插件配置没填公开地址时用机器人的（ctx.publicUrl）；填了的优先', async () => {
+    requiredToken = TOKEN
+    const reply = async (config: Partial<Config>) => {
+      const session = createMockSession({ content: '/摸' })
+      const ctx = createMockContext(plugin, { config: config as Config, db, publicUrl: 'https://bot.qflare.test' })
+      await catchAll({ session, ctx, match: ['/摸'] as unknown as RegExpMatchArray })
+      return session.replies
+    }
+    expect(await reply({ ...CONFIG, token: TOKEN })).toEqual([{ image: { url: 'https://bot.qflare.test/p/meme/image/result' } }])
+    expect(await reply(withToken)).toEqual([{ image: { url: 'https://bot.example.com/p/meme/image/result' } }])
+  })
+
+  it('令牌是 writeOnly：面板不回显', () => {
+    expect((configSchema.properties as Record<string, { writeOnly?: boolean }>).token!.writeOnly).toBe(true)
   })
 
   it('auto：meme 服务按 URL 下载失败时改由 Worker 下载、multipart 上传，这个实例之后直接走 Worker', async () => {

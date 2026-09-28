@@ -27,7 +27,7 @@ const NOT_CONFIGURED = '还没有配置 meme 服务地址：面板 → 插件 �
 const DAY_MS = 86_400_000
 
 function envOf(session: Session, ctx: PluginContext<Config>): Env | null {
-  const settings = resolveSettings(ctx.config)
+  const settings = resolveSettings(ctx.config, ctx.publicUrl)
   if (!settings.baseUrl) return null
   return { session, ctx, settings, api: createApi(settings) }
 }
@@ -123,6 +123,8 @@ const toolCommands: Record<string, Command<Config>> = Object.fromEntries(
 
 export default definePlugin<Config>({
   name: 'meme',
+  // 没用到契约 2 的 ctx.db.batch()，写 1 让 0.4 以前的机器人也能装（不写就是构建时 SDK 的版本）
+  apiVersion: 1,
   displayName: '表情包',
   description: '表情包制作与图片工具，对接 meme-generator-rs',
   permissions: ['net', 'db'],
@@ -256,7 +258,7 @@ export default definePlugin<Config>({
       cron: '23 19 * * *',
       async handler({ ctx }) {
         await purgeExpired(ctx.db)
-        const settings = resolveSettings(ctx.config)
+        const settings = resolveSettings(ctx.config, ctx.publicUrl)
         if (settings.baseUrl) await checkCatalogVersion(ctx.db, createApi(settings))
       },
     },
